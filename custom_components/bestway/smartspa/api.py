@@ -66,6 +66,18 @@ SMARTSPA_ENDPOINTS = {
 
 TIMEOUT = 20  # the gateway can be slow; 10s caused spurious failures upstream
 
+# SmartSpa Connect 2026 shadows sometimes use Gizwits V01 datapoint names
+# (Tnow/Tset/heat/power) rather than AWS IoT names. Reads are translated in
+# v01_attrs_from_shadow; writes have to send the same names the shadow uses.
+_V02_TO_V01_WRITE = {
+    "power_state": "power",
+    "heater_state": "heat",
+    "wave_state": "wave",
+    "filter_state": "filter",
+    "hydrojet_state": "jet",
+    "temperature_setting": "Tset",
+}
+
 
 class SmartSpaException(Exception):
     """Base exception for SmartSpa API operations."""
@@ -426,11 +438,26 @@ class SmartSpaApi(RawStateApi):
             "power_state",
             "hydrojet_state",
             "locked",
+            "power",
+            "wave",
+            "jet",
         ):
             # NOTE: if a 3-level-bubbles model ever shows up on this backend,
             # wave_state may need 0/40/100 passthrough — only 1/0 is confirmed.
             return 1 if numeric else 0
+        # Gizwits V01 wire values (HydrojetFilter.ON=2, HydrojetHeat.ON=3)
+        if key == "filter":
+            return 2 if numeric else 0
+        if key == "heat":
+            return 3 if numeric else 0
         return numeric
+
+    def _uses_v01_shadow(self, device_id: str) -> bool:
+        """True when the last polled shadow already used V01 field names."""
+        snapshot = self._raw_state.get(device_id)
+        if snapshot is None:
+            return False
+        return "Tnow" in snapshot.attrs or "Tset" in snapshot.attrs
 
     async def set_device_state(
         self, device_id: str, state_updates: dict[str, Any]
@@ -441,6 +468,11 @@ class SmartSpaApi(RawStateApi):
             return False
 
         product_key, mac = self._routing[device_id]
+        if self._uses_v01_shadow(device_id):
+            state_updates = {
+                _V02_TO_V01_WRITE.get(key, key): value
+                for key, value in state_updates.items()
+            }
         datapoints = {
             key: self._to_write_value(key, value)
             for key, value in state_updates.items()
