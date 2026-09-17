@@ -125,6 +125,12 @@ class SmartSpaApi(RawStateApi):
 
         # device_id -> (productKey, mac) for URL building
         self._routing: dict[str, tuple[str, str]] = {}
+        # device_id -> True when the last *gateway* shadow used V01 names
+        # (Tnow/Tset). Must be set from the raw shadow, not from
+        # v01_attrs_from_shadow() output — that mapper copies Tnow/Tset
+        # onto V02 devices too, which would remap every write after the
+        # first poll.
+        self._v01_shadow: dict[str, bool] = {}
 
     # ------------------------------------------------------------------ auth
 
@@ -368,6 +374,10 @@ class SmartSpaApi(RawStateApi):
 
                 _LOGGER.debug("SmartSpa shadow for %s: %s", device_id, shadow)
 
+                # Dialect is the names the gateway actually sent, before
+                # v01_attrs_from_shadow() aliases V02 keys to Tnow/Tset.
+                self._v01_shadow[device_id] = "Tnow" in shadow or "Tset" in shadow
+
                 # Same shadow vocabulary as the AWS IoT backend serves.
                 mapped = v01_attrs_from_shadow(shadow)
 
@@ -404,7 +414,7 @@ class SmartSpaApi(RawStateApi):
                 )
                 # Deliberately no placeholder entry here: a RawSnapshot with
                 # empty attrs would translate to a truthy DeviceStatus, which
-                # passes `if not device.status` guards and then raises
+                # passes `if not device.status` guards, and then raises
                 # KeyError downstream. Leaving the cache untouched keeps the
                 # last known state, or no state at all.
 
@@ -453,11 +463,8 @@ class SmartSpaApi(RawStateApi):
         return numeric
 
     def _uses_v01_shadow(self, device_id: str) -> bool:
-        """True when the last polled shadow already used V01 field names."""
-        snapshot = self._raw_state.get(device_id)
-        if snapshot is None:
-            return False
-        return "Tnow" in snapshot.attrs or "Tset" in snapshot.attrs
+        """True when the last gateway shadow used V01 field names."""
+        return self._v01_shadow.get(device_id, False)
 
     async def set_device_state(
         self, device_id: str, state_updates: dict[str, Any]
