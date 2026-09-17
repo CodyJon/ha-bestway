@@ -6,7 +6,34 @@ polls before set_device_state.
 """
 
 import json
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+from custom_components.bestway.smartspa.api import SmartSpaApi
+
+
+@pytest.fixture
+def mock_session():
+    """Create mock aiohttp ClientSession."""
+    session = AsyncMock()
+    session.post = MagicMock()
+    session.request = MagicMock()
+    return session
+
+
+@pytest.fixture
+def api(mock_session):
+    """Create a SmartSpaApi with a valid token and one known device."""
+    client = SmartSpaApi(
+        session=mock_session,
+        account="user@example.com",
+        password="hunter2",
+        api_base="https://smart-spa-eu-app.bestwaycorp.com",
+        token="valid_token",
+    )
+    client._routing["6879c4d585ab"] = ("F12D9Q", "6879c4d585ab")
+    return client
 
 
 async def test_v02_poll_does_not_remap_writes(api):
